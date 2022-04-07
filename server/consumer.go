@@ -2495,6 +2495,7 @@ func (o *consumer) nextWaiting() *waitingRequest {
 				}
 			}
 		}
+		o.srv.Noticef("%s nextWaiting timeout hasgw %t expires %s", o.cfg.Durable, o.srv.gateway.enabled, wr.expires.String())
 		hdr := []byte("NATS/1.0 408 Request Timeout\r\n\r\n")
 		o.outq.send(newJSPubMsg(wr.reply, _EMPTY_, _EMPTY_, hdr, nil, nil, 0))
 		// Remove the current one, no longer valid.
@@ -2800,6 +2801,8 @@ func (o *consumer) processWaiting() (int, int, int, time.Time) {
 		wr := wq.reqs[rp]
 		// Check expiration.
 		if (wr.noWait && wr.d > 0) || (!wr.expires.IsZero() && now.After(wr.expires)) {
+			s.Noticef("%s processWaiting nowait %d wr.d %d now %s expires %s", o.cfg.Durable,
+				wr.noWait, wr.d > 0, now.String(), wr.expires.String())
 			hdr := []byte("NATS/1.0 408 Request Timeout\r\n\r\n")
 			o.outq.send(newJSPubMsg(wr.reply, _EMPTY_, _EMPTY_, hdr, nil, nil, 0))
 			remove(wr, rp)
