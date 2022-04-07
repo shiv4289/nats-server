@@ -2497,7 +2497,9 @@ func (o *consumer) nextWaiting() *waitingRequest {
 				}
 			}
 		}
-		o.srv.Noticef("%s nextWaiting timeout hasgw %t expires %s", o.cfg.Durable, o.srv.gateway.enabled, wr.expires.String())
+		o.srv.Noticef("%s nextWaiting timeout hasgw %t expires %s interrest %s reply %s",
+			o.cfg.Durable, o.srv.gateway.enabled, wr.expires.String(), wr.interest, wr.reply)
+		debug.PrintStack()
 		hdr := []byte("NATS/1.0 408 Request Timeout\r\n\r\n")
 		o.outq.send(newJSPubMsg(wr.reply, _EMPTY_, _EMPTY_, hdr, nil, nil, 0))
 		// Remove the current one, no longer valid.
@@ -2546,8 +2548,7 @@ func (o *consumer) processNextMsgRequest(reply string, msg []byte) {
 		sendErr(400, fmt.Sprintf("Bad Request - %v", err))
 		return
 	}
-
-	o.srv.Tracef("processNextMsgRequest %s %d %t", expires.String(), batchSize, noWait)
+	o.srv.Noticef("processNextMsgRequest %s %d %t ", expires.String(), batchSize, noWait)
 
 	// Check for request limits
 	if o.cfg.MaxRequestBatch > 0 && batchSize > o.cfg.MaxRequestBatch {
@@ -2591,6 +2592,8 @@ func (o *consumer) processNextMsgRequest(reply string, msg []byte) {
 
 	// If we receive this request though an account export, we need to track that interest subject and account.
 	acc, interest := trackDownAccountAndInterest(o.acc, reply)
+
+	o.srv.Noticef("processNextMsgRequest %s %d %t interrest %s reply %s", expires.String(), batchSize, noWait, interest, reply)
 
 	// In case we have to queue up this request.
 	wr := wrPool.Get().(*waitingRequest)
@@ -2807,8 +2810,8 @@ func (o *consumer) processWaiting() (int, int, int, time.Time) {
 		if (wr.noWait && wr.d > 0) || (!wr.expires.IsZero() && now.After(wr.expires)) {
 			//[INF] jsm_stream_pager_713821649371935493894000 processWaiting
 			// nowait %!d(bool=true) wr.d %!d(bool=true) now 2022-04-07 22:52:29.74093847 +0000 UTC m=+251.616216769 expires 0001-01-01 00:00:00 +0000 UTC
-			s.Noticef("%s processWaiting nowait %t wr.d %d now %s expires %s", o.cfg.Durable,
-				wr.noWait, wr.d > 0, now.String(), wr.expires.String())
+			s.Noticef("%s processWaiting nowait %t wr.d %d now %s expires %s interest %s reply %s", o.cfg.Durable,
+				wr.noWait, wr.d > 0, now.String(), wr.expires.String(), wr.interest, wr.reply)
 			debug.PrintStack()
 			hdr := []byte("NATS/1.0 408 Request Timeout\r\n\r\n")
 			o.outq.send(newJSPubMsg(wr.reply, _EMPTY_, _EMPTY_, hdr, nil, nil, 0))
