@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -2295,6 +2296,7 @@ func nextReqFromMsg(msg []byte) (time.Time, int, bool, time.Duration, time.Time,
 			}
 			hbt = time.Now().Add(cr.Heartbeat)
 		}
+
 		if cr.Expires == time.Duration(0) {
 			return time.Time{}, cr.Batch, cr.NoWait, cr.Heartbeat, hbt, nil
 		}
@@ -2544,6 +2546,8 @@ func (o *consumer) processNextMsgRequest(reply string, msg []byte) {
 		sendErr(400, fmt.Sprintf("Bad Request - %v", err))
 		return
 	}
+
+	o.srv.Tracef("processNextMsgRequest %s %d %t", expires.String(), batchSize, noWait)
 
 	// Check for request limits
 	if o.cfg.MaxRequestBatch > 0 && batchSize > o.cfg.MaxRequestBatch {
@@ -2801,8 +2805,11 @@ func (o *consumer) processWaiting() (int, int, int, time.Time) {
 		wr := wq.reqs[rp]
 		// Check expiration.
 		if (wr.noWait && wr.d > 0) || (!wr.expires.IsZero() && now.After(wr.expires)) {
-			s.Noticef("%s processWaiting nowait %d wr.d %d now %s expires %s", o.cfg.Durable,
+			//[INF] jsm_stream_pager_713821649371935493894000 processWaiting
+			// nowait %!d(bool=true) wr.d %!d(bool=true) now 2022-04-07 22:52:29.74093847 +0000 UTC m=+251.616216769 expires 0001-01-01 00:00:00 +0000 UTC
+			s.Noticef("%s processWaiting nowait %t wr.d %d now %s expires %s", o.cfg.Durable,
 				wr.noWait, wr.d > 0, now.String(), wr.expires.String())
+			debug.PrintStack()
 			hdr := []byte("NATS/1.0 408 Request Timeout\r\n\r\n")
 			o.outq.send(newJSPubMsg(wr.reply, _EMPTY_, _EMPTY_, hdr, nil, nil, 0))
 			remove(wr, rp)
