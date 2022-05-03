@@ -4326,7 +4326,6 @@ func TestJWTActivationRevocation(t *testing.T) {
 		aExp1Jwt := encodeClaim(t, aExpClaim, aExpPub)
 		aExpCreds := newUser(t, aExpKp)
 
-		time.Sleep(1100 * time.Millisecond)
 		aImpKp, aImpPub := createKey(t)
 
 		revPubKey := aImpPub
@@ -4379,7 +4378,7 @@ func TestJWTActivationRevocation(t *testing.T) {
 			defer removeDir(t, dirSrv) // clean jwt directory
 
 			updateJwt(t, srv.ClientURL(), sysCreds, sysJwt, 1)   // update system account jwt
-			updateJwt(t, srv.ClientURL(), sysCreds, aExp2Jwt, 1) // set account jwt without revocation
+			updateJwt(t, srv.ClientURL(), sysCreds, aExp2Jwt, 1) // set account jwt with revocation
 			updateJwt(t, srv.ClientURL(), sysCreds, aImpJwt, 1)
 
 			ncExp1 := natsConnect(t, srv.ClientURL(), nats.UserCredentials(aExpCreds))
@@ -4391,8 +4390,12 @@ func TestJWTActivationRevocation(t *testing.T) {
 			sub, err := ncImp.SubscribeSync("foo")
 			require_NoError(t, err)
 			require_NoError(t, ncImp.Flush())
+			fmt.Printf("@@IK: publish at=%v\n", time.Now().Unix())
 			require_NoError(t, ncExp1.Publish("foo", []byte("1")))
-			_, err = sub.NextMsg(time.Second)
+			msg, err := sub.NextMsg(250 * time.Millisecond)
+			if err == nil {
+				fmt.Printf("@@IK: msg=%s\n", msg.Data)
+			}
 			require_Error(t, err)
 			require_Equal(t, err.Error(), "nats: timeout")
 		})
@@ -4422,8 +4425,9 @@ func TestJWTActivationRevocation(t *testing.T) {
 
 			updateJwt(t, srv.ClientURL(), sysCreds, aExp2Jwt, 1) // set account jwt with revocation
 
+			fmt.Printf("@@IK: publish at=%v\n", time.Now().Unix())
 			require_NoError(t, ncExp1.Publish("foo", []byte("2")))
-			_, err = sub.NextMsg(time.Second)
+			_, err = sub.NextMsg(250 * time.Millisecond)
 			require_Error(t, err)
 			require_Equal(t, err.Error(), "nats: timeout")
 

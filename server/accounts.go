@@ -3089,6 +3089,9 @@ func (s *Server) updateAccountClaimsWithRefresh(a *Account, ac *jwt.AccountClaim
 			revocationChanged = &streamTokenExpirationChanged
 			if se, ok := a.exports.streams[string(e.Subject)]; ok && se != nil {
 				ea = &se.exportAuth
+				fmt.Printf("@@IK: will check ea=%+v\n", ea)
+			} else {
+				fmt.Printf("@@IK: no export auth to check!\n")
 			}
 		case jwt.Service:
 			revocationChanged = &serviceTokenExpirationChanged
@@ -3098,6 +3101,7 @@ func (s *Server) updateAccountClaimsWithRefresh(a *Account, ac *jwt.AccountClaim
 		}
 		if ea != nil {
 			oldRevocations := ea.actsRevoked
+			fmt.Printf("@@IK: e.revocation=%v oldRevocations=%v\n", e.Revocations, ea.actsRevoked)
 			if len(e.Revocations) == 0 {
 				// remove all, no need to evaluate existing imports
 				ea.actsRevoked = nil
@@ -3105,13 +3109,17 @@ func (s *Server) updateAccountClaimsWithRefresh(a *Account, ac *jwt.AccountClaim
 				// add all, existing imports need to be re evaluated
 				ea.actsRevoked = e.Revocations
 				*revocationChanged = true
+				fmt.Printf("@@IK: revocation changed revocation=%v\n", ea.actsRevoked)
 			} else {
 				ea.actsRevoked = e.Revocations
 				// diff, existing imports need to be conditionally re evaluated, depending on:
 				// if a key was added, or it's timestamp increased
 				for k, t := range e.Revocations {
 					if tOld, ok := oldRevocations[k]; !ok || tOld < t {
+						fmt.Printf("@@IK: revocation changed k=%v t=%v tOld=%v\n", k, t, tOld)
 						*revocationChanged = true
+					} else {
+						fmt.Printf("@@IK: revocation NOT changed: k=%v t=%v tOld=%v\n", k, t, tOld)
 					}
 				}
 			}
@@ -3188,6 +3196,7 @@ func (s *Server) updateAccountClaimsWithRefresh(a *Account, ac *jwt.AccountClaim
 				if im != nil && im.acc.Name == a.Name {
 					// Check for if we are still authorized for an import.
 					im.invalid = !a.checkStreamImportAuthorized(acc, im.from, im.claim)
+					fmt.Printf("@@IK: HERE! im.invalid=%v awcsti[%s] set\n", im.invalid, acc.Name)
 					awcsti[acc.Name] = struct{}{}
 					for c := range acc.clients {
 						clients[c] = struct{}{}
