@@ -21,13 +21,17 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/nats-io/jwt/v2"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nkeys"
 )
 
 func TestJetStreamSuperClusterMetaPlacement(t *testing.T) {
@@ -2482,4 +2486,252 @@ func TestJetStreamSuperClusterStateOnRestartPreventsConsumerRecovery(t *testing.
 	if o := mset.lookupConsumer("dlc"); o == nil {
 		t.Fatalf("Consumer was not properly restarted")
 	}
+}
+
+func checkGWMode(sname string, gwc *client, accName string, expectedMode GatewayInterestMode) error {
+	gwc.mu.Lock()
+	defer gwc.mu.Unlock()
+	out, _ := gwc.gw.outsim.Load(accName)
+	if out == nil {
+		if expectedMode == InterestOnly {
+			return fmt.Errorf(
+				"Server %q outbound GW to %q (srv=%q) interest map not found for account %q",
+				sname, gwc.gw.name, gwc.opts.Name, accName)
+		}
+		// otherwise, it is normal
+	} else if mode := out.(*outsie).mode; mode != expectedMode {
+		return fmt.Errorf(
+			"Server %q outbound GW to %q (srv=%q) for account %q mode shoule be %v but is %v",
+			sname, gwc.gw.name, gwc.opts.Name, accName, expectedMode, mode)
+	}
+	return nil
+}
+
+func TestJetStreamSuperClusterMixedModeSwitchToInterestOnlyStaticConfig(t *testing.T) {
+	tmpl := `
+		listen: 127.0.0.1:-1
+		server_name: %s
+		jetstream: { domain: ngs, max_mem_store: 256MB, max_file_store: 2GB, store_dir: '%s'}
+		leaf: { listen: 127.0.0.1:-1 }
+
+		cluster {
+			name: %s
+			listen: 127.0.0.1:%d
+			routes = [%s]
+		}
+
+		accounts {
+			ONE {
+				users = [  { user: "one", pass: "pwd" } ]
+				jetstream: enabled
+			}
+			TWO { users = [  { user: "two", pass: "pwd" } ] }
+			$SYS { users = [ { user: "admin", pass: "s3cr3t!" } ] }
+		}
+	`
+	sc := createJetStreamSuperClusterWithTemplateAndModHook(t, tmpl, 5, 3,
+		func(serverName, clusterName, storeDir, conf string) string {
+			sname := serverName[strings.Index(serverName, "-")+1:]
+			switch sname {
+			case "S4", "S5":
+				conf = strings.ReplaceAll(conf, "jetstream: { ", "#jetstream: { ")
+			default:
+				conf = strings.ReplaceAll(conf, "leaf: { ", "#leaf: { ")
+			}
+			return conf
+		})
+	defer sc.shutdown()
+
+	// Connect our client to a non JS server
+	c := sc.randomCluster()
+	var s *Server
+	for _, as := range c.servers {
+		if !as.JetStreamEnabled() {
+			s = as
+			break
+		}
+	}
+	if s == nil {
+		t.Fatal("Did not find a non JS server!")
+	}
+	nc, js := jsClientConnect(t, s, nats.UserInfo("one", "pwd"))
+	defer nc.Close()
+
+	// Just create a stream and then make sure that all gateways have switched
+	// to interest-only mode.
+	si, err := js.AddStream(&nats.StreamConfig{Name: "interest", Replicas: 3})
+	require_NoError(t, err)
+
+	sc.waitOnStreamLeader("ONE", "interest")
+
+	check := func(accName string, expectedMode GatewayInterestMode) {
+		t.Helper()
+		checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+			for _, c := range sc.clusters {
+				for _, s := range c.servers {
+					// Check only JS servers outbound GW connections
+					if !s.JetStreamEnabled() {
+						continue
+					}
+					var gwsa [16]*client
+					gws := gwsa[:0]
+					// Get the GW outbound connections
+					s.getOutboundGatewayConnections(&gws)
+					sname := s.Name()
+					// Check that they are in interest-only mode
+					for _, gwc := range gws {
+						if err := checkGWMode(sname, gwc, accName, expectedMode); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			return nil
+		})
+	}
+	// Since account "ONE" is known in all servers, all JS servers outbound
+	// GW connections should have been switched to InterestOnly for account
+	// "ONE" and should still be Optimistic for account "TWO".
+	check("ONE", InterestOnly)
+	check("TWO", Optimistic)
+
+	var gwsa [16]*client
+	gws := gwsa[:0]
+
+	s = sc.serverByName(si.Cluster.Leader)
+	// Get the GW outbound connections
+	s.getOutboundGatewayConnections(&gws)
+	for _, gwc := range gws {
+		gwc.mu.Lock()
+		gwc.nc.Close()
+		gwc.mu.Unlock()
+	}
+	waitForOutboundGateways(t, s, 2, 5*time.Second)
+	check("ONE", InterestOnly)
+	check("TWO", Optimistic)
+}
+
+func TestJetStreamSuperClusterMixedModeSwitchToInterestOnlyOperatorConfig(t *testing.T) {
+	kp, _ := nkeys.FromSeed(oSeed)
+
+	skp, _ := nkeys.CreateAccount()
+	spub, _ := skp.PublicKey()
+	nac := jwt.NewAccountClaims(spub)
+	sjwt, err := nac.Encode(kp)
+	require_NoError(t, err)
+
+	akp, _ := nkeys.CreateAccount()
+	apub, _ := akp.PublicKey()
+	nac = jwt.NewAccountClaims(apub)
+	// Set some limits to enable JS.
+	nac.Limits.JetStreamLimits.DiskStorage = 1024 * 1024
+	nac.Limits.JetStreamLimits.Streams = 10
+	ajwt, err := nac.Encode(kp)
+	require_NoError(t, err)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, spub) {
+			w.Write([]byte(sjwt))
+		} else {
+			w.Write([]byte(ajwt))
+		}
+	}))
+	defer ts.Close()
+
+	operator := fmt.Sprintf(`
+		operator: %s
+		resolver: URL("%s/ngs/v1/accounts/jwt/")
+	`, ojwt, ts.URL)
+
+	tmpl := `
+		listen: 127.0.0.1:-1
+		server_name: %s
+		jetstream: { domain: ngs, max_mem_store: 256MB, max_file_store: 2GB, store_dir: '%s'}
+		leaf: { listen: 127.0.0.1:-1 }
+
+		cluster {
+			name: %s
+			listen: 127.0.0.1:%d
+			routes = [%s]
+		}
+	` + operator
+	sc := createJetStreamSuperClusterWithTemplateAndModHook(t, tmpl, 5, 3,
+		func(serverName, clusterName, storeDir, conf string) string {
+			conf = strings.ReplaceAll(conf, "system_account: \"$SYS\"", fmt.Sprintf("system_account: \"%s\"", spub))
+			sname := serverName[strings.Index(serverName, "-")+1:]
+			switch sname {
+			case "S4", "S5":
+				conf = strings.ReplaceAll(conf, "jetstream: { ", "#jetstream: { ")
+			default:
+				conf = strings.ReplaceAll(conf, "leaf: { ", "#leaf: { ")
+			}
+			return conf
+		})
+	defer sc.shutdown()
+
+	// Connect our client to a non JS server
+	c := sc.randomCluster()
+	var s *Server
+	for _, as := range c.servers {
+		if !as.JetStreamEnabled() {
+			s = as
+			break
+		}
+	}
+	if s == nil {
+		t.Fatal("Did not find a non JS server!")
+	}
+	nc, js := jsClientConnect(t, s, createUserCreds(t, nil, akp))
+	defer nc.Close()
+
+	// Just create a stream and then make sure that all gateways have switched
+	// to interest-only mode.
+	si, err := js.AddStream(&nats.StreamConfig{Name: "interest", Replicas: 3})
+	require_NoError(t, err)
+
+	sc.waitOnStreamLeader(apub, "interest")
+
+	check := func(s *Server) {
+		t.Helper()
+		checkFor(t, 5*time.Second, 15*time.Millisecond, func() error {
+			var gwsa [16]*client
+			gws := gwsa[:0]
+
+			// Get the GW outbound connections
+			s.getOutboundGatewayConnections(&gws)
+			sname := s.Name()
+
+			// Check that they are in interest-only mode
+			for _, gwc := range gws {
+				if err := checkGWMode(sname, gwc, apub, InterestOnly); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	s = sc.serverByName(si.Cluster.Leader)
+	check(s)
+
+	// Let's cause a leadership change and verify that it still works.
+	_, err = nc.Request(fmt.Sprintf(JSApiStreamLeaderStepDownT, "interest"), nil, time.Second)
+	require_NoError(t, err)
+	sc.waitOnStreamLeader(apub, "interest")
+
+	si, err = js.StreamInfo("interest")
+	require_NoError(t, err)
+	s = sc.serverByName(si.Cluster.Leader)
+	check(s)
+
+	var gwsa [16]*client
+	gws := gwsa[:0]
+	// Get the GW outbound connections
+	s.getOutboundGatewayConnections(&gws)
+	for _, gwc := range gws {
+		gwc.mu.Lock()
+		gwc.nc.Close()
+		gwc.mu.Unlock()
+	}
+	waitForOutboundGateways(t, s, 2, 5*time.Second)
+	check(s)
 }

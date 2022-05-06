@@ -1581,6 +1581,9 @@ func (s *Server) fetchAccount(name string) (*Account, error) {
 		}
 		acc.addAllServiceImportSubs()
 	}
+	if s.gateway.enabled {
+		s.switchAccountJetStreamEnabledToInterestMode(acc)
+	}
 	return acc, nil
 }
 

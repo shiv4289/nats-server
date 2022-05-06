@@ -479,6 +479,8 @@ func (s *Server) startGatewayAcceptLoop() {
 		port = 0
 	}
 
+	jsEnabled := s.JetStreamEnabled()
+
 	s.mu.Lock()
 	if s.shutdown {
 		s.mu.Unlock()
@@ -509,6 +511,7 @@ func (s *Server) startGatewayAcceptLoop() {
 		Gateway:      opts.Gateway.Name,
 		GatewayNRP:   true,
 		Headers:      s.supportsHeaders(),
+		JetStream:    jsEnabled,
 	}
 	// If we have selected a random port...
 	if port == 0 {
@@ -1140,6 +1143,13 @@ func (c *client) processGatewayInfo(info *Info) {
 					}
 				}
 			}
+		} else if info.JetStream {
+			// This server is non JS enabled, but the remote is. We will switch
+			// GW to interest-only mode for accounts that are JS enabled.
+			s.accounts.Range(func(_, v interface{}) bool {
+				s.switchAccountJetStreamEnabledToInterestMode(v.(*Account))
+				return true
+			})
 		}
 	}
 }
@@ -2105,6 +2115,23 @@ func (s *Server) switchAccountToInterestMode(accName string) {
 			gin.gatewaySwitchAccountToSendAllSubs(e, accName)
 		}
 		gin.mu.Unlock()
+	}
+}
+
+// This function will switch the gateways to InterestOnly mode if the
+// given account has JetStream configured.
+// This can be invoked on servers that are non JetStream enabled, which
+// is the case in a "mixed-mode" cluster, where some of the servers
+// are JetStream enabled while some are not.
+func (s *Server) switchAccountJetStreamEnabledToInterestMode(a *Account) {
+	// a.JetStreamEnabled() would always be false on a non JS server,
+	// so we check account's JS limits to decide if we do the switch or not.
+	a.mu.RLock()
+	doSwitch := a.jsLimits != nil
+	accName := a.Name
+	a.mu.RUnlock()
+	if doSwitch {
+		s.switchAccountToInterestMode(accName)
 	}
 }
 
