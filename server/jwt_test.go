@@ -4326,6 +4326,7 @@ func TestJWTActivationRevocation(t *testing.T) {
 		aExp1Jwt := encodeClaim(t, aExpClaim, aExpPub)
 		aExpCreds := newUser(t, aExpKp)
 
+		time.Sleep(1100 * time.Millisecond)
 		aImpKp, aImpPub := createKey(t)
 
 		revPubKey := aImpPub
@@ -4392,7 +4393,7 @@ func TestJWTActivationRevocation(t *testing.T) {
 			require_NoError(t, ncImp.Flush())
 			fmt.Printf("@@IK: publish at=%v\n", time.Now().Unix())
 			require_NoError(t, ncExp1.Publish("foo", []byte("1")))
-			msg, err := sub.NextMsg(250 * time.Millisecond)
+			msg, err := sub.NextMsg(time.Second)
 			if err == nil {
 				fmt.Printf("@@IK: msg=%s\n", msg.Data)
 			}
@@ -4427,7 +4428,7 @@ func TestJWTActivationRevocation(t *testing.T) {
 
 			fmt.Printf("@@IK: publish at=%v\n", time.Now().Unix())
 			require_NoError(t, ncExp1.Publish("foo", []byte("2")))
-			_, err = sub.NextMsg(250 * time.Millisecond)
+			_, err = sub.NextMsg(time.Second)
 			require_Error(t, err)
 			require_Equal(t, err.Error(), "nats: timeout")
 
