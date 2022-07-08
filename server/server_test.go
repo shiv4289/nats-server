@@ -110,6 +110,7 @@ func LoadConfig(configFile string) (opts *Options) {
 func RunServerWithConfig(configFile string) (srv *Server, opts *Options) {
 	opts = LoadConfig(configFile)
 	srv = RunServer(opts)
+	fmt.Printf("@@IK: server %p - %s started (id=%s)\n", srv, srv, srv.ID())
 	return
 }
 

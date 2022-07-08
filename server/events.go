@@ -578,10 +578,12 @@ func (s *Server) TrackedRemoteServers() int {
 // Check for orphan servers who may have gone away without notification.
 // This should be wrapChk() to setup common locking.
 func (s *Server) checkRemoteServers() {
+	fmt.Printf("@@IK: --- checkRemoteServers from server %p - %s (%s) started=%v ----\n", s, s, s.info.ID, time.Since(s.start))
 	now := time.Now()
 	for sid, su := range s.sys.servers {
 		if now.Sub(su.ltime) > s.sys.orphMax {
 			s.Debugf("Detected orphan remote server: %q", sid)
+			fmt.Printf("@@IK: Detected orphan remote server: %q !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", sid)
 			// Simulate it going away.
 			s.processRemoteServerShutdown(sid)
 		}
@@ -1065,8 +1067,10 @@ func (s *Server) processRemoteServerShutdown(sid string) {
 	// Update any state in nodeInfo.
 	s.nodeToInfo.Range(func(k, v interface{}) bool {
 		ni := v.(nodeInfo)
+		fmt.Printf("@@IK: processRemoteServerShutdown(%s) compare to ni.id=%s\n", sid, ni.id)
 		if ni.id == sid {
 			ni.offline = true
+			fmt.Printf("@@IK: processRemoteServerShutdown(%s) set offline to true: ni=%p => %+v\n", sid, &ni, ni)
 			s.nodeToInfo.Store(k, ni)
 			return false
 		}
@@ -1107,10 +1111,14 @@ func (s *Server) remoteServerShutdown(sub *subscription, c *client, _ *Account, 
 
 	// JetStream node updates if applicable.
 	node := string(getHash(si.Name))
+	fmt.Printf("@@IK: remoteServerShutdown(%s) => node=%s\n", si.Name, node)
 	if v, ok := s.nodeToInfo.Load(node); ok && v != nil {
 		ni := v.(nodeInfo)
 		ni.offline = true
+		fmt.Printf("@@IK: remoteServerShutdown(%s) - set offline to true: ni=%p => %+v\n", si.Name, &ni, ni)
 		s.nodeToInfo.Store(node, ni)
+	} else {
+		fmt.Printf("@@IK: remoteServerShutdown(%s) node not found\n", si.Name)
 	}
 
 	sid := toks[serverSubjectIndex]

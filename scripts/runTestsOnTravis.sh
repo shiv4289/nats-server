@@ -62,7 +62,7 @@ elif [ "$1" = "srv_pkg_non_js_tests" ]; then
     # JS tests by using the `skip_js_tests` build tag.
 
     export GODEBUG="x509sha1=1"
-    go test -race -v -p=1 ./server/... -tags=skip_js_tests -count=1 -vet=off -timeout=30m -failfast
+    go test -race -v -p=1 ./server/... -tags=skip_js_tests -count=1 -vet=off -timeout=30m
 
 elif [ "$1" = "non_srv_pkg_tests" ]; then
 

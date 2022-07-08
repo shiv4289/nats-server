@@ -4309,6 +4309,7 @@ func TestJWTUserRevocation(t *testing.T) {
 }
 
 func TestJWTActivationRevocation(t *testing.T) {
+	t.Skip()
 	test := func(all bool) {
 		sysKp, syspub := createKey(t)
 		sysJwt := encodeClaim(t, jwt.NewAccountClaims(syspub), syspub)

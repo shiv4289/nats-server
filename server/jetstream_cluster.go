@@ -4257,6 +4257,8 @@ func (cc *jetStreamCluster) remapStreamAssignment(sa *streamAssignment, removePe
 
 // selectPeerGroup will select a group of peers to start a raft group.
 func (cc *jetStreamCluster) selectPeerGroup(r int, cluster string, cfg *StreamConfig, existing []string) (re []string) {
+	fmt.Printf("@@IK: -- select group starts ---\n")
+	defer fmt.Printf("@@IK: -- select group ends ---\n")
 	if cluster == _EMPTY_ || cfg == nil {
 		return nil
 	}
@@ -4336,26 +4338,32 @@ func (cc *jetStreamCluster) selectPeerGroup(r int, cluster string, cfg *StreamCo
 
 	// Shuffle them up.
 	rand.Shuffle(len(peers), func(i, j int) { peers[i], peers[j] = peers[j], peers[i] })
+	var conds []int
 	for _, p := range peers {
 		si, ok := s.nodeToInfo.Load(p.ID)
 		if !ok || si == nil {
+			conds = append(conds, 1)
 			continue
 		}
 		ni := si.(nodeInfo)
 		// Only select from the designated named cluster.
 		// If we know its offline or we do not have config or stats don't consider.
 		if ni.cluster != cluster || ni.offline || ni.cfg == nil || ni.stats == nil {
+			fmt.Printf("@@IK: ni=%p => %+v\n", &ni, ni)
+			conds = append(conds, 2)
 			continue
 		}
 
 		// If existing also skip, we will add back in to front of the list when done.
 		if ep != nil {
 			if _, ok := ep[p.ID]; ok {
+				conds = append(conds, 3)
 				continue
 			}
 		}
 
 		if ni.tags.Contains(jsExcludePlacement) {
+			conds = append(conds, 4)
 			continue
 		}
 
@@ -4368,6 +4376,7 @@ func (cc *jetStreamCluster) selectPeerGroup(r int, cluster string, cfg *StreamCo
 				}
 			}
 			if !matched {
+				conds = append(conds, 5)
 				continue
 			}
 		}
@@ -4400,16 +4409,19 @@ func (cc *jetStreamCluster) selectPeerGroup(r int, cluster string, cfg *StreamCo
 		if maxBytes > 0 && maxBytes > available {
 			s.Warnf("%s@%s (Max Bytes: %d) exceeds available %s storage of %d bytes",
 				ni.name, ni.cluster, maxBytes, cfg.Storage.String(), available)
+			conds = append(conds, 6)
 			continue
 		}
 		// HAAssets contain _meta_ which we want to ignore
 		if maxHaAssets > 0 && ni.stats != nil && ni.stats.HAAssets > maxHaAssets {
 			s.Warnf("%s@%s (HA Asset Count: %d) exceeds max ha asset limit of %d for stream placement",
 				ni.name, ni.cluster, ni.stats.HAAssets, maxHaAssets)
+			conds = append(conds, 7)
 			continue
 		}
 
 		if uniqueTagPrefix != _EMPTY_ && !checkUniqueTag(&ni) {
+			conds = append(conds, 8)
 			continue
 		}
 		// Add to our list of potential nodes.
@@ -4418,6 +4430,8 @@ func (cc *jetStreamCluster) selectPeerGroup(r int, cluster string, cfg *StreamCo
 
 	// If we could not select enough peers, fail.
 	if len(nodes) < (r - len(existing)) {
+		fmt.Printf("@@IK: peers=%+v\nnodes=%+v\nr=%v\nexisting=%v\n", peers, nodes, r, existing)
+		fmt.Printf("@@IK: conds=%+v\n", conds)
 		return nil
 	}
 	// Sort based on available from most to least.
@@ -4503,12 +4517,14 @@ func (js *jetStream) createGroupForStream(ci *ClientInfo, cfg *StreamConfig) *ra
 
 	// Need to create a group here.
 	for _, cn := range clusters {
+		fmt.Printf("@@IK: cn=%s\n", cn)
 		peers := cc.selectPeerGroup(replicas, cn, cfg, nil)
 		if len(peers) < replicas {
 			continue
 		}
 		return &raftGroup{Name: groupNameForStream(peers, cfg.Storage), Storage: cfg.Storage, Peers: peers, Cluster: cn}
 	}
+	fmt.Printf("@@IK: ci=%+v\ncfg=%+v\nreplicas=%v\nclusterDefined=%v\nclusters=%v\n", ci, cfg, replicas, clusterDefined, clusters)
 	return nil
 }
 
