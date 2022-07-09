@@ -2087,6 +2087,7 @@ func TestJetStreamSuperClusterMovingStreamAndMoveBack(t *testing.T) {
 
 			checkMove := func(cluster string) {
 				t.Helper()
+				sc.waitOnStreamLeader("$G", "TEST")
 				checkFor(t, 20*time.Second, 100*time.Millisecond, func() error {
 					si, err := js.StreamInfo("TEST")
 					if err != nil {

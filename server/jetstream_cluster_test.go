@@ -3947,6 +3947,7 @@ func TestJetStreamClusterPeerEvacuationAndStreamReassignment(t *testing.T) {
 				return nil
 			})
 		}
+		c.waitOnStreamLeader("$G", "$TEST")
 		// Now wait until the stream is now current.
 		checkFor(t, 20*time.Second, 100*time.Millisecond, func() error {
 			si, err := js.StreamInfo("TEST", nats.MaxWait(time.Second))

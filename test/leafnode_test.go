@@ -1530,7 +1530,7 @@ func TestLeafNodeMultipleAccounts(t *testing.T) {
 	defer s.Shutdown()
 
 	// Setup the two accounts for this server.
-	_, akp1 := createAccount(t, s)
+	a, akp1 := createAccount(t, s)
 	kp1, _ := nkeys.CreateUser()
 	pub1, _ := kp1.PublicKey()
 	nuc1 := jwt.NewUserClaims(pub1)
@@ -1575,12 +1575,7 @@ func TestLeafNodeMultipleAccounts(t *testing.T) {
 	lsub, _ := ncl.SubscribeSync("foo.test")
 
 	// Wait for the subs to propagate. LDS + foo.test
-	checkFor(t, 2*time.Second, 10*time.Millisecond, func() error {
-		if subs := s.NumSubscriptions(); subs < 4 {
-			return fmt.Errorf("Number of subs is %d", subs)
-		}
-		return nil
-	})
+	checkSubInterest(t, s, a.GetName(), "foo.test", 2*time.Second)
 
 	// Now send from nc1 with account 1, should be received by our leafnode subscriber.
 	nc1.Publish("foo.test", nil)
