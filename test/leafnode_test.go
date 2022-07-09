@@ -1904,12 +1904,7 @@ func TestLeafNodeExportsImports(t *testing.T) {
 	lsub, _ := ncl.SubscribeSync("import.foo.stream")
 
 	// Wait for all subs to propagate.
-	checkFor(t, time.Second, 10*time.Millisecond, func() error {
-		if subs := s.NumSubscriptions(); subs < 5 {
-			return fmt.Errorf("Number of subs is %d", subs)
-		}
-		return nil
-	})
+	checkSubInterest(t, s, acc1.GetName(), "import.foo.stream", time.Second)
 
 	// Pub to other account with export on original subject.
 	nc2.Publish("foo.stream", nil)
@@ -2069,7 +2064,7 @@ func TestLeafNodeExportImportComplexSetup(t *testing.T) {
 
 	// Wait for the sub to propagate to s2. LDS + subject above.
 	checkFor(t, 2*time.Second, 15*time.Millisecond, func() error {
-		if acc1.RoutedSubs() != 4 {
+		if acc1.RoutedSubs() != 5 {
 			return fmt.Errorf("Still no routed subscription: %d", acc1.RoutedSubs())
 		}
 		return nil
